@@ -1,4 +1,3 @@
-pip install sentence-transformers
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
