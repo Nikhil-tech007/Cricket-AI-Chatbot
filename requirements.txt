@@ -1,10 +1,11 @@
 langchain-ollama
 langchain
 crewai
-langchain_community
+langchain-community
 pypdf
 faiss-cpu
 duckduckgo-search
 langchain-groq
 streamlit
 sentence-transformers
+langchain-huggingface
