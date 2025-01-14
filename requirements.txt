@@ -1,0 +1,9 @@
+langchain-ollama
+langchain
+crewai
+langchain_community
+pypdf
+faiss-cpu
+duckduckgo-search
+langchain-groq
+streamlit
