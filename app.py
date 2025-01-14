@@ -1,102 +1,175 @@
 import streamlit as st
-import numpy as np
-from typing import List
-import time
+from langchain_groq import ChatGroq
+from langchain_community.embeddings.huggingface import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.vectorstores import FAISS
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+import os
+from dotenv import load_dotenv
 
-class SimpleSearch:
-    """Simple search implementation without external dependencies"""
-    def __init__(self):
-        self.documents = []
-        
-    def add_document(self, text: str):
-        """Add a document to the search index"""
-        self.documents.append(text.lower())
-        
-    def search(self, query: str, top_k: int = 3) -> List[str]:
-        """Search for relevant documents"""
-        query = query.lower()
-        scores = []
-        
-        # Calculate similarity scores
-        for doc in self.documents:
-            # Simple word overlap score
-            query_words = set(query.split())
-            doc_words = set(doc.split())
-            overlap = len(query_words.intersection(doc_words))
-            score = overlap / (len(query_words) + len(doc_words) - overlap + 1e-6)
-            scores.append(score)
-        
-        # Get top results
-        if not scores:
-            return []
-            
-        indices = np.argsort(scores)[-top_k:][::-1]
-        return [self.documents[i] for i in indices if scores[i] > 0]
+# Load environment variables
+load_dotenv()
 
-def get_answer(question: str) -> str:
-    """Generate answer based on question"""
+@st.cache_resource
+def initialize_models():
+    """Initialize LLM models and tools"""
+    models = {}
+    
+    # Initialize Groq LLM
     try:
-        # Simple response generation
-        search_results = st.session_state.search_engine.search(question)
-        if search_results:
-            return "\n\n".join([
-                "Based on the available information:",
-                *search_results
-            ])
-        return "I'm sorry, I don't have enough information to answer that question specifically. Please try asking about basic cricket rules."
+        models['groq_llm'] = ChatGroq(
+            api_key=os.getenv("GROQ_API_KEY"), 
+            temperature=0.3
+        )
+        st.success("✅ Groq LLM initialized successfully")
     except Exception as e:
-        st.error(f"Error generating answer: {str(e)}")
-        return "Sorry, there was an error processing your question. Please try again."
+        st.error(f"Groq initialization error: {str(e)}")
+    
+    # Initialize HuggingFace Embeddings
+    try:
+        models['embeddings'] = HuggingFaceEmbeddings(
+            model_name="all-MiniLM-L6-v2"
+        )
+        st.success("✅ Embeddings model initialized successfully")
+    except Exception as e:
+        st.error(f"Embeddings initialization error: {str(e)}")
+    
+    models['search'] = DuckDuckGoSearchRun()
+    return models
+
+def initialize_retriever():
+    """Process uploaded PDF and create retriever"""
+    try:
+        pdf_path = "Cricket Rules.pdf"
+        
+        # Load PDF
+        loader = PyPDFLoader(pdf_path)
+        documents = loader.load()
+        st.write(f"Number of pages loaded: {len(documents)}")
+        
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=100
+        )
+        splits = text_splitter.split_documents(documents)
+        
+        # Get models
+        models = initialize_models()
+        
+        if 'embeddings' not in models:
+            st.error("Embeddings model not available")
+            return None
+            
+        try:
+            with st.spinner("Creating vector store..."):
+                vectorstore = FAISS.from_documents(splits, models['embeddings'])
+                st.success("✅ Vector store created successfully")
+                return vectorstore.as_retriever()
+        except Exception as e:
+            st.error(f"Failed to create vector store: {str(e)}")
+            return None
+            
+    except FileNotFoundError:
+        st.error(f"PDF file not found: {pdf_path}")
+        return None
+    except Exception as e:
+        st.error(f"Error processing PDF: {str(e)}")
+        return None
+
+def get_answer(question):
+    """Generate answer based on context and question"""
+    models = initialize_models()
+    
+    try:
+        # If no retriever available, use DuckDuckGo
+        if st.session_state.retriever is None:
+            search_result = models['search'].run(question)
+            return f"DuckDuckGo Search Result:\n{search_result}"
+        
+        # Get context from retriever
+        try:
+            context = st.session_state.retriever.invoke(question)
+            context_text = "\n".join([doc.page_content for doc in context])
+        except Exception as e:
+            st.error(f"Error retrieving context: {str(e)}")
+            search_result = models['search'].run(question)
+            return f"DuckDuckGo Search Result (Retrieval Error):\n{search_result}"
+        
+        # Use Groq to generate answer
+        if 'groq_llm' in models:
+            try:
+                groq_prompt = f"""
+                Use the following context from cricket rules to answer the question.
+                If the context doesn't contain relevant information, say so clearly.
+                
+                Context: {context_text}
+                Question: {question}
+                """
+                
+                groq_answer = models['groq_llm'].invoke(groq_prompt)
+                
+                # Check if answer indicates no relevant information
+                if any(phrase in groq_answer.content.lower() for phrase in 
+                       ["does not contain", "no information", "cannot answer", 
+                        "don't have", "doesn't mention", "not mentioned"]):
+                    search_result = models['search'].run(question)
+                    return f"DuckDuckGo Search Result (No relevant context):\n{search_result}"
+                
+                return f"Answer (Based on PDF):\n{groq_answer.content}"
+            
+            except Exception as e:
+                st.error(f"Error generating answer: {str(e)}")
+                search_result = models['search'].run(question)
+                return f"DuckDuckGo Search Result (LLM Error):\n{search_result}"
+        
+        # If no Groq available, fall back to DuckDuckGo
+        search_result = models['search'].run(question)
+        return f"DuckDuckGo Search Result:\n{search_result}"
+        
+    except Exception as e:
+        st.error(f"Unexpected error: {str(e)}")
+        try:
+            search_result = models['search'].run(question)
+            return f"DuckDuckGo Search Result (Error Fallback):\n{search_result}"
+        except Exception as search_error:
+            return f"Error: Unable to generate answer. Please try again later. ({str(e)})"
 
 def main():
     st.title("🏏 Cricket Rules Chatbot")
     
-    # Initialize session states
+    # Initialize session state for messages if it doesn't exist
     if "messages" not in st.session_state:
         st.session_state.messages = []
     
-    if "search_engine" not in st.session_state:
-        with st.spinner("Initializing cricket knowledge..."):
-            st.session_state.search_engine = SimpleSearch()
-            # Add comprehensive cricket rules
-            cricket_rules = [
-                "Cricket is played between two teams of eleven players each on a field.",
-                "The game is played with a bat and ball on a field with a 22-yard pitch in the center.",
-                "A match is divided into innings where one team bats while the other team bowls and fields.",
-                "The objective is to score more runs than the opposing team.",
-                "Runs are scored by running between the wickets after hitting the ball.",
-                "A batsman can be dismissed in several ways including being bowled, caught, LBW, or run out.",
-                "The team with the most runs at the end of the match wins.",
-                "Each team gets to bat and bowl in turns called innings.",
-                "A bowler must bowl the ball with a straight arm, not throw or jerk it.",
-                "The batting team tries to score runs while the bowling team tries to dismiss the batsmen.",
-                "A boundary is worth 4 runs if the ball touches the ground before crossing, and 6 runs if it crosses without touching.",
-                "LBW (Leg Before Wicket) is when the ball would have hit the wickets but hits the batsman's leg instead.",
-                "The wicketkeeper stands behind the wickets to catch balls and attempt dismissals.",
-                "Fielders try to catch the ball or stop runs by returning it to the wickets.",
-                "A wide ball or no-ball results in a penalty run being awarded to the batting team.",
-            ]
-            for rule in cricket_rules:
-                st.session_state.search_engine.add_document(rule)
-            time.sleep(1)  # Brief pause for visual feedback
-            st.success("✅ Cricket knowledge base initialized!")
+    # Initialize retriever if not already done
+    if 'retriever' not in st.session_state or st.session_state.retriever is None:
+        with st.spinner("Loading PDF..."):
+            st.session_state.retriever = initialize_retriever()
+            if st.session_state.retriever:
+                st.success("✅ PDF processed successfully!")
     
-    # Sidebar with information
+    # Sidebar
     with st.sidebar:
-        st.title("ℹ️ About")
-        st.write("""
-        This is a simple cricket rules chatbot that can answer basic questions about cricket.
+        st.title("📄 Upload PDF")
+        uploaded_file = st.file_uploader("Upload your PDF", type="pdf")
         
-        Try asking questions like:
-        - How many players in a cricket team?
-        - What is LBW?
-        - How do you score runs?
-        - What is a boundary worth?
-        """)
+        if uploaded_file is not None:
+            with st.spinner("Processing PDF..."):
+                st.session_state.retriever = initialize_retriever()
+                if st.session_state.retriever:
+                    st.success("PDF processed successfully!")
         
-        if st.button("Clear Chat History"):
+        st.title("💬 Chat History")
+        if st.button("Clear History"):
             st.session_state.messages = []
             st.rerun()
+        
+        # Show question history
+        if st.session_state.messages:
+            for i, msg in enumerate([m for m in st.session_state.messages if m["role"] == "user"], 1):
+                st.write(f"{i}. {msg['content']}")
     
     # Chat interface
     for message in st.session_state.messages:
@@ -111,7 +184,7 @@ def main():
             st.write(question)
             
         with st.chat_message("assistant"):
-            with st.spinner("Finding relevant information..."):
+            with st.spinner("Thinking..."):
                 response = get_answer(question)
                 st.write(response)
                 st.session_state.messages.append({"role": "assistant", "content": response})
