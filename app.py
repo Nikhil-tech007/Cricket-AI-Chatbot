@@ -4,6 +4,13 @@ import sys
 
 # Function to install required packages
 def install_packages():
+     # First, try to update pip
+    try:
+        st.write("📦 Updating pip...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
+        st.success("✅ Pip updated successfully")
+    except Exception as e:
+        st.warning(f"⚠️ Could not update pip: {str(e)}")
     packages = [
         "sentence-transformers",
         "langchain-groq",
@@ -13,7 +20,7 @@ def install_packages():
     for package in packages:
         try:
             st.write(f"Installing {package}...")
-            subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", package])
             st.success(f"✅ {package} installed successfully")
         except Exception as e:
             st.error(f"Failed to install {package}: {str(e)}")
