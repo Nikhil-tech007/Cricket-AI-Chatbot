@@ -30,6 +30,7 @@ except ImportError:
         st.stop()
 from langchain_groq import ChatGroq
 from langchain_community.embeddings.huggingface import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
