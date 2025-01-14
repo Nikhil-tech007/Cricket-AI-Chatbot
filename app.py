@@ -7,9 +7,7 @@ def install_packages():
     packages = [
         "sentence-transformers",
         "langchain-groq",
-        "langchain-community",
-        "transformers",
-        "torch"
+        "langchain-community"
     ]
     
     for package in packages:
