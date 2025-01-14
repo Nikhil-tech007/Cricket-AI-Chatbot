@@ -1,4 +1,35 @@
 import streamlit as st
+import subprocess
+import sys
+
+# Function to install required packages
+def install_packages():
+    packages = [
+        "sentence-transformers",
+        "langchain-groq",
+        "langchain-community",
+        "transformers",
+        "torch"
+    ]
+    
+    for package in packages:
+        try:
+            st.write(f"Installing {package}...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+            st.success(f"✅ {package} installed successfully")
+        except Exception as e:
+            st.error(f"Failed to install {package}: {str(e)}")
+            return False
+    return True
+
+# Install packages if not already installed
+try:
+    import sentence_transformers
+except ImportError:
+    st.warning("Installing required packages...")
+    if not install_packages():
+        st.error("Failed to install required packages")
+        st.stop()
 from langchain_groq import ChatGroq
 from langchain_community.embeddings.huggingface import HuggingFaceEmbeddings
 from langchain_community.tools import DuckDuckGoSearchRun
